@@ -1348,7 +1348,7 @@ public:
     {
         auto encoder { _connection->createEncoder () };
         encodeArguments (encoder.get (), args...);
-        _connection->sendMessage (methodID.getMessageID (), std::move (encoder), nullptr, nullptr);
+        _connection->sendMessage (methodID.getMessageID (), std::move (encoder));
     }
 
     template<typename RetT, typename... Args>
@@ -1356,12 +1356,12 @@ public:
     {
         auto encoder { _connection->createEncoder () };
         encodeArguments (encoder.get (), args...);
-        const auto replyHandler { [] (const MessageDecoder* decoder, void* userData) -> void
-            {
-                ARA_INTERNAL_ASSERT (decoder);
-                decodeReply (*reinterpret_cast<RetT*> (userData), decoder);
-            } };
-        _connection->sendMessage (methodID.getMessageID (), std::move (encoder), replyHandler, &result);
+        _connection->sendMessage (methodID.getMessageID (), std::move (encoder),
+                                  [&result] (const MessageDecoder* decoder)
+                                  {
+                                      ARA_INTERNAL_ASSERT (decoder);
+                                      decodeReply (result, decoder);
+                                  });
     }
 
     template<typename... Args>
@@ -1369,12 +1369,12 @@ public:
     {
         auto encoder { _connection->createEncoder () };
         encodeArguments (encoder.get (), args...);
-        const auto replyHandler { [] (const MessageDecoder* decoder, void* userData) -> void
-            {
-                ARA_INTERNAL_ASSERT (decoder);
-                (*reinterpret_cast<CustomDecodeFunction*> (userData)) (decoder);
-            } };
-        _connection->sendMessage (methodID.getMessageID (), std::move (encoder), replyHandler, &decodeFunction);
+        _connection->sendMessage (methodID.getMessageID (), std::move (encoder),
+                                  [&decodeFunction] (const MessageDecoder* decoder)
+                                  {
+                                      ARA_INTERNAL_ASSERT (decoder);
+                                      decodeFunction (decoder);
+                                  });
     }
 
     bool receiverEndianessMatches () const { return _connection->receiverEndianessMatches (); }
