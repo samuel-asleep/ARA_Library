@@ -1273,15 +1273,20 @@ public:
 
 //! @name Sending content updates to the host
 //! The implementation will internally enqueue the updates and later send them to the host
-//! from notifyModelUpdates ().
+//! from notifyModelUpdates().
 //! Note that while the ARA API allows for specifying affected time ranges for content updates,
 //! this feature is not yet supported in our current plug-in implementation (since most hosts
 //! do not evaluate this either).
+//! Since older ARA 2.x hosts will not yet support notifyRegionSequenceDataChanged(), the implementation
+//! will eventually fall back to calling notifyDocumentDataChanged() instead if needed. This allows
+//! plug-ins to consistently utilize the new update APIs (but they will still need to branch out for
+//! old hosts/archives in their implementation of doStoreObjectsToArchive()/doRestoreObjectsFromArchive()).
 //@{
     void notifyAudioSourceContentChanged (AudioSource* audioSource, ContentUpdateScopes scopeFlags) noexcept;
     void notifyAudioModificationContentChanged (AudioModification* audioModification, ContentUpdateScopes scopeFlags) noexcept;
     void notifyPlaybackRegionContentChanged (PlaybackRegion* playbackRegion, ContentUpdateScopes scopeFlags) noexcept;
     void notifyDocumentDataChanged () noexcept;
+    ARA_DRAFT void notifyRegionSequenceDataChanged (RegionSequence* regionSequence) noexcept;
 //@}
 
     // Helper for analysis requests.
@@ -1356,6 +1361,7 @@ private:
     std::map<AudioSource*, ContentUpdateScopes> _audioSourceContentUpdates;
     std::map<AudioModification*, ContentUpdateScopes> _audioModificationContentUpdates;
     std::map<PlaybackRegion*, ContentUpdateScopes> _playbackRegionContentUpdates;
+    std::set<RegionSequence*> _regionSequenceDataUpdates;
     bool _documentDataChanged { false };
     std::atomic_flag _analysisProgressIsSynced {}; // { true } would be better but C++ standard only allows for default-init to false
 
