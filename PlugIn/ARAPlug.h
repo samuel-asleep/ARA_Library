@@ -1808,12 +1808,13 @@ public:
     virtual ~FactoryConfig () = default;
 
     //! \copydoc ARAFactory::lowestSupportedApiGeneration
-    virtual ARAAPIGeneration getLowestSupportedApiGeneration () const noexcept
+    virtual ARAAPIGeneration getLowestSupportedApiGeneration () const noexcept { return (supportsSampleBasedAudioSources ()) ?
 #if ARA_CPU_ARM
-                                                                                { return kARAAPIGeneration_2_0_Final; }
+                                                                                            kARAAPIGeneration_2_0_Final :
 #else
-                                                                                { return kARAAPIGeneration_2_0_Draft; }
+                                                                                            kARAAPIGeneration_2_0_Draft :
 #endif
+                                                                                                                          kARAAPIGeneration_3_0_Draft; }
     //! \copydoc ARAFactory::highestSupportedApiGeneration
     virtual ARAAPIGeneration getHighestSupportedApiGeneration () const noexcept { return kARAAPIGeneration_3_0_Draft; }
 
@@ -1848,6 +1849,15 @@ public:
 
     //! \copydoc ARAFactory::supportsStoringAudioFileChunks
     virtual bool supportsStoringAudioFileChunks () const noexcept { return false; }
+
+    //! \copydoc ARAFactory::supportsSampleBasedAudioSources
+    virtual bool supportsSampleBasedAudioSources () const noexcept { return true; }
+
+    //! \copydoc ARAFactory::supportsContentOnlyAudioSources
+    virtual bool supportsContentOnlyAudioSources () const noexcept { return false; }
+
+    //! \copydoc ARAFactory::requiresPresetAudioSources
+    virtual bool requiresPresetAudioSources () const noexcept { return false; }
 };
 
 
@@ -1965,7 +1975,7 @@ private:
 
 private:
     const FactoryConfig* const _factoryConfig;
-    const SizedStruct<&ARAFactory::supportsStoringAudioFileChunks> _factory;
+    const SizedStruct<&ARAFactory::requiresPresetAudioSources> _factory;
     ARAAPIGeneration _usedApiGeneration { 0 };
 
     ARA_DISABLE_COPY_AND_MOVE (PlugInEntry)
