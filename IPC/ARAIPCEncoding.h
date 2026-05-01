@@ -742,6 +742,25 @@ ARA_IPC_BEGIN_DECODE (ARAContentChord)
     ARA_IPC_DECODE_MEMBER (position)
 ARA_IPC_END_DECODE
 
+ARA_IPC_BEGIN_ENCODE (ARAContentLyricsEntry)
+    ARA_IPC_ENCODE_MEMBER (lyrics)
+    ARA_IPC_ENCODE_MEMBER (continuesPreviousWord)
+    ARA_IPC_ENCODE_MEMBER (language)
+    ARA_IPC_ENCODE_VARIABLE_ARRAY (phonemes, phonemeCount)
+    ARA_IPC_ENCODE_VARIABLE_ARRAY (phonemeOffsets, phonemeCount)
+    ARA_IPC_ENCODE_MEMBER (phonemesGrade)
+    ARA_IPC_ENCODE_MEMBER (position)
+ARA_IPC_END_ENCODE
+ARA_IPC_BEGIN_DECODE (ARAContentLyricsEntry)
+    ARA_IPC_DECODE_MEMBER (lyrics)
+    ARA_IPC_DECODE_MEMBER (continuesPreviousWord)
+    ARA_IPC_DECODE_MEMBER (language)
+    ARA_IPC_DECODE_VARIABLE_ARRAY (phonemes, phonemeCount, true)
+    ARA_IPC_DECODE_VARIABLE_ARRAY (phonemeOffsets, phonemeCount, false)
+    ARA_IPC_DECODE_MEMBER (phonemesGrade)
+    ARA_IPC_DECODE_MEMBER (position)
+ARA_IPC_END_DECODE
+
 ARA_IPC_BEGIN_ENCODE (ARARestoreObjectsFilter)
     ARA_IPC_ENCODE_MEMBER (documentData)
     ARA_IPC_ENCODE_VARIABLE_ARRAY (audioSourceArchiveIDs, audioSourceIDsCount)
