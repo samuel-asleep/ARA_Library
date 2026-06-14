@@ -144,10 +144,9 @@ class MessageDispatcher
 public:     // needs to be public for thread-local variables (which cannot be class members)
 #if defined (_WIN32)
     using ThreadRef = int32_t;
-#elif defined (__APPLE__)
-    using ThreadRef = size_t;
 #else
-    #error "not yet implemented on this platform"
+    // Apple and Linux: std::thread::id is pointer-sized.
+    using ThreadRef = size_t;
 #endif
     static constexpr ThreadRef _invalidThread { 0 };
 
@@ -685,17 +684,20 @@ Connection::Connection (MessageEncoderFactory && messageEncoderFactory, MessageH
   _messageHandler { std::move (messageHandler) },
   _receiverEndianessMatches { receiverEndianessMatches },
   _waitForMessageDelegate { std::move (waitForMessageDelegate) },
-  _creationThreadID { std::this_thread::get_id () },
+  _creationThreadID { std::this_thread::get_id () }
 #if defined (_WIN32)
-  _creationThreadHandle { _GetRealCurrentThread () }
+  , _creationThreadHandle { _GetRealCurrentThread () }
 {}
 #elif defined (__APPLE__)
-  _creationThreadRunLoop { CFRunLoopGetCurrent () }
+  , _creationThreadRunLoop { CFRunLoopGetCurrent () }
 {
     CFRunLoopSourceContext context { 0, this, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, _performRunLoopSource };
     _runloopSource = CFRunLoopSourceCreate (kCFAllocatorDefault, 0, &context);
     CFRunLoopAddSource (_creationThreadRunLoop, _runloopSource, kCFRunLoopCommonModes);
 }
+#else
+  // Linux: _queue, _mutex, and _condition all default-construct.
+{}
 #endif
 
 Connection::~Connection ()
@@ -739,6 +741,13 @@ void Connection::dispatchToCreationThread (DispatchableFunction func)
     _mutex.unlock ();
     CFRunLoopSourceSignal (_runloopSource);
     CFRunLoopWakeUp (_creationThreadRunLoop);
+#else
+    // Linux: push onto the queue and wake the creation thread.
+    {
+        std::lock_guard<std::mutex> lock { _mutex };
+        _queue.emplace (std::move (func));
+    }
+    _condition.notify_one ();
 #endif
 }
 

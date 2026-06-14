@@ -33,6 +33,7 @@
 
 #include <functional>
 #include <mutex>
+#include <condition_variable>
 #include <memory>
 #include <thread>
 #include <queue>
@@ -169,7 +170,12 @@ private:
     std::queue<DispatchableFunction> _queue;    // \todo instead of locking, use a lockless concurrent queue,
     std::recursive_mutex _mutex;                // eg this one: https://github.com/hogliux/farbot
 #else
-    #error "not yet implemented on this platform"
+    // Linux: dispatch queue protected by mutex + condition variable.
+    // dispatchToCreationThread() pushes a function and notifies;
+    // processPendingMessageOnCreationThreadIfNeeded() drains it.
+    std::queue<DispatchableFunction> _queue;
+    std::mutex _mutex;
+    std::condition_variable _condition;
 #endif
 };
 
