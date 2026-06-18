@@ -753,6 +753,26 @@ void Connection::dispatchToCreationThread (DispatchableFunction func)
 
 void Connection::processPendingMessageOnCreationThreadIfNeeded ()
 {
+#if defined (__linux__)
+    // On Linux there is no run loop to fire dispatch functions automatically,
+    // so we must drain Connection::_queue here before letting the main thread
+    // dispatcher check for a pending IPC message.
+    // We hold the lock only while popping each item, then release it before
+    // executing so that dispatchToCreationThread() can push more items
+    // concurrently without deadlocking.
+    while (true)
+    {
+        DispatchableFunction func;
+        {
+            std::lock_guard<std::mutex> lock { _mutex };
+            if (_queue.empty ())
+                break;
+            func = std::move (_queue.front ());
+            _queue.pop ();
+        }
+        func ();
+    }
+#endif
     _mainThreadDispatcher->processPendingMessageIfNeeded ();
 }
 
