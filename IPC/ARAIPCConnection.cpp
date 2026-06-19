@@ -127,7 +127,7 @@ namespace ARA {
 namespace IPC {
 
 
-#if defined (_WIN32)
+#if defined (_WIN32) && !defined (__WINE__)
     #define readThreadRef readInt32
     #define appendThreadRef appendInt32
 #else
@@ -142,10 +142,10 @@ static bool _debugAsHost {};
 class MessageDispatcher
 {
 public:     // needs to be public for thread-local variables (which cannot be class members)
-#if defined (_WIN32)
+#if defined (_WIN32) && !defined (__WINE__)
     using ThreadRef = int32_t;
 #else
-    // Apple and Linux: std::thread::id is pointer-sized.
+    // Apple, Linux, and Wine: std::thread::id is pointer-sized.
     using ThreadRef = size_t;
 #endif
     static constexpr ThreadRef _invalidThread { 0 };
@@ -233,6 +233,56 @@ std::unique_ptr<MessageEncoder> MessageDispatcher::_handleReceivedMessage (Messa
 //------------------------------------------------------------------------------
 
 // helper for MainThreadMessageDispatcher: single-object message queue with semaphore to wait on
+// Wine: std::binary_semaphore's try_acquire_for hangs (broken futex mapping).
+// Use POSIX sem_t with sem_timedwait instead.
+#if defined (__WINE__)
+#include <semaphore.h>
+#include <time.h>
+class WaitableSingleMessageQueue
+{
+    public:
+        WaitableSingleMessageQueue () { sem_init (&_sem, 0, 0); }
+        ~WaitableSingleMessageQueue () { sem_destroy (&_sem); }
+
+        std::optional<std::pair<MessageID, std::unique_ptr<const MessageDecoder>>> waitOnSemaphore (ARATimeDuration timeout)
+        {
+            bool didReceiveMessage;
+            if (timeout <= 0.0)
+            {
+                didReceiveMessage = (sem_trywait (&_sem) == 0);
+            }
+            else
+            {
+                struct timespec ts {};
+                clock_gettime (CLOCK_REALTIME, &ts);
+                long long ns = static_cast<long long> (timeout * 1e9);
+                ts.tv_sec  += ns / 1000000000LL;
+                ts.tv_nsec += ns % 1000000000LL;
+                if (ts.tv_nsec >= 1000000000LL) { ts.tv_sec++; ts.tv_nsec -= 1000000000LL; }
+                didReceiveMessage = (sem_timedwait (&_sem, &ts) == 0);
+            }
+            if (didReceiveMessage)
+            {
+                const auto messageID { _pendingMessageID };
+                const auto messageDecoder { _pendingMessageDecoder.load (std::memory_order_acquire) };
+                return std::make_pair (messageID, std::unique_ptr<const MessageDecoder> (messageDecoder));
+            }
+            return {};
+        }
+
+        void signalSemaphore (MessageID messageID, std::unique_ptr<const MessageDecoder> && decoder)
+        {
+            _pendingMessageID = messageID;
+            _pendingMessageDecoder.store (decoder.release (), std::memory_order_release);
+            sem_post (&_sem);
+        }
+
+    private:
+        MessageID _pendingMessageID { 0 };
+        std::atomic<const MessageDecoder*> _pendingMessageDecoder { nullptr };
+        sem_t _sem;
+};
+#else
 class WaitableSingleMessageQueue
 {
     public:
@@ -306,6 +356,7 @@ class WaitableSingleMessageQueue
         std::atomic<const MessageDecoder*> _pendingMessageDecoder { nullptr };
         void* const _waitForMessageSemaphore;   // concrete type is platform-dependent
 };
+#endif // !defined(__WINE__) — close the #else block for the original WaitableSingleMessageQueue
 
 //------------------------------------------------------------------------------
 
@@ -629,7 +680,7 @@ void OtherThreadsMessageDispatcher::_processReceivedMessage (MessageID messageID
 
 //------------------------------------------------------------------------------
 
-#if defined (_WIN32)
+#if defined (_WIN32) && !defined (__WINE__)
 
 // from https://devblogs.microsoft.com/oldnewthing/20141015-00/?p=43843
 BOOL ConvertToRealHandle(HANDLE h,
@@ -685,7 +736,7 @@ Connection::Connection (MessageEncoderFactory && messageEncoderFactory, MessageH
   _receiverEndianessMatches { receiverEndianessMatches },
   _waitForMessageDelegate { std::move (waitForMessageDelegate) },
   _creationThreadID { std::this_thread::get_id () }
-#if defined (_WIN32)
+#if defined (_WIN32) && !defined (__WINE__)
   , _creationThreadHandle { _GetRealCurrentThread () }
 {}
 #elif defined (__APPLE__)
@@ -731,7 +782,7 @@ void Connection::sendMessage (MessageID messageID, std::unique_ptr<MessageEncode
 
 void Connection::dispatchToCreationThread (DispatchableFunction func)
 {
-#if defined (_WIN32)
+#if defined (_WIN32) && !defined (__WINE__)
     auto funcPtr { new DispatchableFunction { func } };
     [[maybe_unused]] const auto result { ::QueueUserAPC (APCRouteNewTransactionFunc, _creationThreadHandle, reinterpret_cast<ULONG_PTR> (funcPtr)) };
     ARA_INTERNAL_ASSERT (result != 0);
@@ -753,7 +804,7 @@ void Connection::dispatchToCreationThread (DispatchableFunction func)
 
 void Connection::processPendingMessageOnCreationThreadIfNeeded ()
 {
-#if defined (__linux__)
+#if (!defined (_WIN32) || defined (__WINE__)) && !defined (__APPLE__)
     // On Linux there is no run loop to fire dispatch functions automatically,
     // so we must drain Connection::_queue here before letting the main thread
     // dispatcher check for a pending IPC message.

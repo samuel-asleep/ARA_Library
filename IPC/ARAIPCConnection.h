@@ -25,7 +25,7 @@
 #if ARA_ENABLE_IPC
 
 
-#if defined (_WIN32)
+#if defined (_WIN32) && !defined (__WINE__)
     #include <Windows.h>
 #elif defined (__APPLE__)
     #include <CoreFoundation/CFRunLoop.h>
@@ -162,7 +162,7 @@ private:
     std::unique_ptr<MainThreadMessageDispatcher> _mainThreadDispatcher {};
     std::unique_ptr<OtherThreadsMessageDispatcher> _otherThreadsDispatcher {};
     std::thread::id const _creationThreadID;
-#if defined (_WIN32)
+#if defined (_WIN32) && !defined (__WINE__)
     HANDLE const _creationThreadHandle;
 #elif defined (__APPLE__)
     CFRunLoopRef const _creationThreadRunLoop;
