@@ -118,6 +118,37 @@ jobs:
             --config Debug \
             --parallel
 
+      - name: Bundle MSVC Debug runtime DLLs
+        shell: pwsh
+        run: |
+          # Find MSVC Debug runtime DLLs installed on the runner
+          # These are needed by Wine to load the Debug VST3 build
+          $vcToolsDir = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+            -latest -property installationPath
+          $vstDest = "$env:GITHUB_WORKSPACE\build\examples\Plugins\ARAPluginDemo_artefacts\Debug\VST3\ARAPluginDemo.vst3\Contents\x86_64-win"
+
+          $dlls = @("MSVCP140D.dll","VCRUNTIME140D.dll","VCRUNTIME140_1D.dll","ucrtbased.dll")
+          foreach ($dll in $dlls) {
+            $found = Get-ChildItem -Path "$vcToolsDir" -Filter $dll -Recurse -ErrorAction SilentlyContinue |
+                     Where-Object { $_.FullName -match "x64" } |
+                     Select-Object -First 1
+            if ($found) {
+              Copy-Item $found.FullName -Destination $vstDest
+              Write-Host "Copied: $dll"
+            } else {
+              Write-Warning "Not found: $dll"
+            }
+          }
+          # ucrtbased is in Windows SDK
+          $ucrtDir = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+          $ucrtFound = Get-ChildItem -Path $ucrtDir -Filter "ucrtbased.dll" -Recurse -ErrorAction SilentlyContinue |
+                       Where-Object { $_.FullName -match "x64" } |
+                       Select-Object -First 1
+          if ($ucrtFound) {
+            Copy-Item $ucrtFound.FullName -Destination $vstDest -Force
+            Write-Host "Copied: ucrtbased.dll from Windows SDK"
+          }
+
       - name: Locate VST3
         shell: bash
         run: |
