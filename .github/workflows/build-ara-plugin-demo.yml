@@ -1,37 +1,27 @@
-name: Build ARAPluginDemo VST3 (Linux)
+name: Build ARAPluginDemo VST3
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  # ---------------------------------------------------------------------------
+  # Linux native build (Debug, for IPC testing without Wine)
+  # ---------------------------------------------------------------------------
+  build-linux:
     runs-on: ubuntu-latest
 
     steps:
-      # -----------------------------------------------------------------------
-      # 1. Check out ARA_Library (this repo) — no submodule init yet
-      # -----------------------------------------------------------------------
       - name: Check out ARA_Library
         uses: actions/checkout@v4
         with:
           path: ARA_Library
 
-      # -----------------------------------------------------------------------
-      # 2. Clone JUCE_ARA directly (shallow) into the expected location
-      #    .gitmodules declares it but since we can't run git submodule add
-      #    locally without cloning, we just clone it directly here.
-      # -----------------------------------------------------------------------
       - name: Clone JUCE_ARA
         run: |
           git clone --depth 1 --branch develop \
             https://github.com/Celemony/JUCE_ARA.git \
             "$GITHUB_WORKSPACE/ARA_Library/JUCE_ARA"
-          echo "JUCE_ARA: $(git -C $GITHUB_WORKSPACE/ARA_Library/JUCE_ARA log --oneline -1)"
 
-      # -----------------------------------------------------------------------
-      # 3. Check out ARA_API so JUCE can find it via JUCE_GLOBAL_ARA_SDK_PATH
-      #    Layout: ARA_SDK/ARA_API/  +  ARA_SDK/ARA_Library/ (symlink)
-      # -----------------------------------------------------------------------
       - name: Check out ARA_API
         uses: actions/checkout@v4
         with:
@@ -41,31 +31,16 @@ jobs:
       - name: Assemble ARA SDK umbrella
         run: |
           ln -s "$GITHUB_WORKSPACE/ARA_Library" "$GITHUB_WORKSPACE/ARA_SDK/ARA_Library"
-          echo "ARA_SDK contents: $(ls $GITHUB_WORKSPACE/ARA_SDK/)"
 
-      # -----------------------------------------------------------------------
-      # 4. Install Linux JUCE build dependencies
-      # -----------------------------------------------------------------------
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build \
-            libasound2-dev \
-            libfreetype-dev \
-            libcurl4-openssl-dev \
-            libx11-dev \
-            libxinerama-dev \
-            libxrandr-dev \
-            libxcursor-dev \
-            libxcomposite-dev \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            pkg-config
+            libasound2-dev libfreetype-dev libcurl4-openssl-dev \
+            libx11-dev libxinerama-dev libxrandr-dev libxcursor-dev \
+            libxcomposite-dev libwebkit2gtk-4.1-dev libgtk-3-dev pkg-config
 
-      # -----------------------------------------------------------------------
-      # 5. CMake configure — build ARAPluginDemo examples only, Debug
-      # -----------------------------------------------------------------------
       - name: CMake configure
         run: |
           cmake \
@@ -78,32 +53,83 @@ jobs:
             -DJUCE_GLOBAL_ARA_SDK_PATH="$GITHUB_WORKSPACE/ARA_SDK" \
             -DJUCE_COPY_PLUGIN_AFTER_BUILD=OFF
 
-      # -----------------------------------------------------------------------
-      # 6. Build only the ARAPluginDemo VST3 target
-      # -----------------------------------------------------------------------
       - name: Build ARAPluginDemo_VST3
         run: |
           cmake --build "$GITHUB_WORKSPACE/build" \
             --target ARAPluginDemo_VST3 \
             --parallel $(nproc)
 
-      # -----------------------------------------------------------------------
-      # 7. Locate and display built files
-      # -----------------------------------------------------------------------
-      - name: Locate VST3
-        run: |
-          echo "=== Built VST3 ==="
-          find "$GITHUB_WORKSPACE/build" \( -name "*.so" -path "*/VST3/*" -o -name "*.vst3" \) 2>/dev/null
-
-      # -----------------------------------------------------------------------
-      # 8. Upload artifact
-      # -----------------------------------------------------------------------
-      - name: Upload ARAPluginDemo VST3
+      - name: Upload Linux VST3
         uses: actions/upload-artifact@v4
         with:
           name: ARAPluginDemo-VST3-linux-debug
+          path: ${{ github.workspace }}/build/**/*VST3*/**
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # Windows build (Debug, MSVC, for Wine testing)
+  # ---------------------------------------------------------------------------
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out ARA_Library
+        uses: actions/checkout@v4
+        with:
+          path: ARA_Library
+
+      - name: Clone JUCE_ARA
+        shell: bash
+        run: |
+          git clone --depth 1 --branch develop \
+            https://github.com/Celemony/JUCE_ARA.git \
+            "$GITHUB_WORKSPACE/ARA_Library/JUCE_ARA"
+
+      - name: Check out ARA_API
+        uses: actions/checkout@v4
+        with:
+          repository: Celemony/ARA_API
+          path: ARA_SDK/ARA_API
+
+      - name: Assemble ARA SDK umbrella
+        shell: bash
+        run: |
+          # On Windows we copy instead of symlink for MSVC compatibility
+          cp -r "$GITHUB_WORKSPACE/ARA_Library" "$GITHUB_WORKSPACE/ARA_SDK/ARA_Library"
+
+      - name: CMake configure (MSVC)
+        shell: bash
+        run: |
+          cmake \
+            -B "$GITHUB_WORKSPACE/build" \
+            -S "$GITHUB_WORKSPACE/ARA_Library/JUCE_ARA" \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DJUCE_BUILD_EXAMPLES=ON \
+            -DJUCE_BUILD_EXTRAS=OFF \
+            -DJUCE_GLOBAL_ARA_SDK_PATH="$GITHUB_WORKSPACE/ARA_SDK" \
+            -DJUCE_COPY_PLUGIN_AFTER_BUILD=OFF
+
+      - name: Build ARAPluginDemo_VST3
+        shell: bash
+        run: |
+          cmake --build "$GITHUB_WORKSPACE/build" \
+            --target ARAPluginDemo_VST3 \
+            --config Debug \
+            --parallel
+
+      - name: Locate VST3
+        shell: bash
+        run: |
+          find "$GITHUB_WORKSPACE/build" -name "*.vst3" -o -name "*.dll" \
+            | grep -i "ARAPlugin" | head -20
+
+      - name: Upload Windows VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: ARAPluginDemo-VST3-windows-debug
           path: |
             ${{ github.workspace }}/build/**/*.vst3
-            ${{ github.workspace }}/build/**/*VST3*/*.so
+            ${{ github.workspace }}/build/**/*ARAPlugin*.dll
           if-no-files-found: warn
           retention-days: 30
