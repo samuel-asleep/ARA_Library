@@ -27,12 +27,46 @@
 #include "ARA_Library/Utilities/ARAStdVectorUtilities.h"
 
 #include <cstring>
+#include <cstdio>
 #include <string>
 #include <vector>
 
+#if defined (__WINE__)
+    // Wine: need Win32 APIs for the initializeARAWithConfiguration thread trick
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
+    #ifndef WIN32_LEAN_AND_MEAN
+        #define WIN32_LEAN_AND_MEAN
+    #endif
+    #include <windows.h>
+    #include <ole2.h>
+    #include <pthread.h>
+    #include <signal.h>
+    #include <unistd.h>
+    #include <chrono>
+    #include <thread>
+#endif
+
+
+// (assert logger defined inside ARA::IPC namespace below)
 
 namespace ARA {
 namespace IPC {
+
+// Logging assert function passed to initializeARAWithConfiguration.
+// Melodyne fires ARA assertions even in Release builds — logging them
+// reveals threading violations and other setup errors (per Stefan Gretscher).
+// Must be ms_abi since Melodyne (MSVC PE) calls it with Windows calling convention.
+static void __attribute__((ms_abi)) _araAssertLogger (ARA::ARAAssertCategory category,
+                                                       const void* /*problematicArgument*/,
+                                                       const char* diagnosis) noexcept
+{
+    std::fprintf (stderr, "[ARA_ASSERT] category=%d: %s\n",
+                  (int)category, diagnosis ? diagnosis : "(null)");
+    std::fflush (stderr);
+}
+
 namespace ProxyHostImpl {
 
 class AudioAccessController;
@@ -685,12 +719,84 @@ void ProxyHost::handleReceivedMessage (const MessageID messageID, const MessageD
     else if (messageID == kInitializeARAMethodID)
     {
         ARAPersistentID factoryID;
-        ARA::SizedStruct<&ARA::ARAInterfaceConfiguration::assertFunctionAddress> interfaceConfig = { kARAAPIGeneration_2_0_Final, nullptr };
+        // Use a logging assert so Melodyne's threading checks produce output.
+        // Cast to ARAAssertFunction (which has no ABI annotation under wineg++)
+        // — Melodyne will call it via ms_abi, which our function provides.
+        static ARAAssertFunction _assertFn =
+            reinterpret_cast<ARAAssertFunction>(_araAssertLogger);
+        static ARA::SizedStruct<&ARA::ARAInterfaceConfiguration::assertFunctionAddress> interfaceConfig;
+        interfaceConfig = { kARAAPIGeneration_2_0_Final, &_assertFn };
         decodeArguments (decoder, factoryID, interfaceConfig.desiredApiGeneration);
         ARA_INTERNAL_ASSERT (interfaceConfig.desiredApiGeneration >= kARAAPIGeneration_2_0_Final);
 
         if (const ARAFactory* const factory { getFactoryWithID (factoryID) })
+        {
+#if defined (__WINE__)
+            // Under wineg++, ARA_CALL is empty (no ms_abi attribute), but
+            // Melodyne.vst3 is a real Windows PE compiled with MSVC that
+            // expects its arguments in %rcx (ms_abi). Cast explicitly.
+            //
+            // The creation thread (pluginMainLoop) already has:
+            //   - OleInitialize (STA)
+            //   - Win32 message queue (PeekMessageW)
+            //   - 32MB stack (STACK_SIZE_PARAM_IS_A_RESERVATION)
+            // Call initFn directly here — adding another thread creates a second
+            // STA which causes COM cross-apartment failures under Wine.
+            //
+            // Melodyne's std::thread objects may call their destructor from
+            // within the thread they represent, causing join()-on-self →
+            // EINVAL → std::system_error → std::terminate. Install a terminate
+            // handler that exits the crashing thread silently instead of
+            // aborting the whole process. The terminate handler must be set
+            // process-wide before initFn runs so Melodyne's threads use it.
+            auto oldTerminate = std::set_terminate([] () noexcept {
+                // A Melodyne thread (or our std::thread) has an unhandled
+                // exception. We can't continue safely, so exit cleanly with
+                // status 0 so the host doesn't treat it as a crash.
+                // Use _exit() to skip destructors and avoid re-entrancy.
+                std::fprintf(stderr, "[ProxyHost] terminate intercepted — exiting cleanly\n");
+                std::fflush(stderr);
+                _exit(0);
+            });
+
+            // Also handle SIGSEGV from Wine's access violation handler —
+            // Melodyne's background threads may fault accessing stale data.
+            // The signal handler must use siglongjmp or just return to let
+            // the faulting thread exit.
+            struct sigaction sa_segv{}, old_segv{};
+            sa_segv.sa_handler = [](int){ pthread_exit(nullptr); };
+            sa_segv.sa_flags = SA_RESETHAND;
+            sigaction(SIGSEGV, &sa_segv, &old_segv);
+
+            struct sigaction sa_abrt{}, old_abrt{};
+            sa_abrt.sa_handler = [](int){ pthread_exit(nullptr); };
+            sa_abrt.sa_flags = SA_RESETHAND;
+            sigaction(SIGABRT, &sa_abrt, &old_abrt);
+
+            std::fprintf (stderr, "[ProxyHost] calling initializeARAWithConfiguration on creation thread\n");
+            std::fflush (stderr);
+            using InitFn = void (__attribute__((ms_abi)) *) (const ARAInterfaceConfiguration*);
+            auto initFn = reinterpret_cast<InitFn>(
+                reinterpret_cast<void*>(factory->initializeARAWithConfiguration));
+            try {
+                initFn (&interfaceConfig);
+            } catch (...) {
+                std::fprintf (stderr, "[ProxyHost] initFn exception swallowed\n");
+                std::fflush (stderr);
+            }
+            std::fprintf (stderr, "[ProxyHost] initializeARAWithConfiguration returned\n");
+            std::fflush (stderr);
+
+            // Restore original terminate handler and signal handlers
+            std::set_terminate(oldTerminate);
+            sigaction(SIGSEGV, &old_segv, nullptr);
+            sigaction(SIGABRT, &old_abrt, nullptr);
+#elif defined (_WIN32)
             factory->initializeARAWithConfiguration (&interfaceConfig);
+#else
+            factory->initializeARAWithConfiguration (&interfaceConfig);
+#endif
+        }
     }
     else if (messageID == kCreateDocumentControllerMethodID)
     {

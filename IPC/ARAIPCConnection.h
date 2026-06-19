@@ -25,7 +25,7 @@
 #if ARA_ENABLE_IPC
 
 
-#if defined (_WIN32)
+#if defined (_WIN32) && !defined (__WINE__)
     #include <Windows.h>
 #elif defined (__APPLE__)
     #include <CoreFoundation/CFRunLoop.h>
@@ -33,6 +33,7 @@
 
 #include <functional>
 #include <mutex>
+#include <condition_variable>
 #include <memory>
 #include <thread>
 #include <queue>
@@ -161,7 +162,7 @@ private:
     std::unique_ptr<MainThreadMessageDispatcher> _mainThreadDispatcher {};
     std::unique_ptr<OtherThreadsMessageDispatcher> _otherThreadsDispatcher {};
     std::thread::id const _creationThreadID;
-#if defined (_WIN32)
+#if defined (_WIN32) && !defined (__WINE__)
     HANDLE const _creationThreadHandle;
 #elif defined (__APPLE__)
     CFRunLoopRef const _creationThreadRunLoop;
@@ -169,7 +170,12 @@ private:
     std::queue<DispatchableFunction> _queue;    // \todo instead of locking, use a lockless concurrent queue,
     std::recursive_mutex _mutex;                // eg this one: https://github.com/hogliux/farbot
 #else
-    #error "not yet implemented on this platform"
+    // Linux: dispatch queue protected by mutex + condition variable.
+    // dispatchToCreationThread() pushes a function and notifies;
+    // processPendingMessageOnCreationThreadIfNeeded() drains it.
+    std::queue<DispatchableFunction> _queue;
+    std::mutex _mutex;
+    std::condition_variable _condition;
 #endif
 };
 
