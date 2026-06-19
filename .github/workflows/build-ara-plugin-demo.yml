@@ -1,7 +1,7 @@
 name: Build ARAPluginDemo VST3 (Linux)
 
 on:
-  workflow_dispatch:   # manual trigger only
+  workflow_dispatch:
 
 jobs:
   build:
@@ -9,7 +9,7 @@ jobs:
 
     steps:
       # -----------------------------------------------------------------------
-      # 1. Check out this repo (ARA_Library) — JUCE_ARA lives inside it
+      # 1. Check out ARA_Library (this repo) — no submodule init yet
       # -----------------------------------------------------------------------
       - name: Check out ARA_Library
         uses: actions/checkout@v4
@@ -17,11 +17,18 @@ jobs:
           path: ARA_Library
 
       # -----------------------------------------------------------------------
-      # 2. Check out the ARA_SDK umbrella so JUCE can find ARA_API/
-      #    The umbrella layout expected by JUCE_GLOBAL_ARA_SDK_PATH is:
-      #      ARA_SDK/
-      #        ARA_API/        ← from Celemony/ARA_API
-      #        ARA_Library/    ← this repo (already checked out above)
+      # 2. Init + clone the JUCE_ARA submodule (defined in .gitmodules)
+      #    Using a shallow clone to keep it fast
+      # -----------------------------------------------------------------------
+      - name: Init JUCE_ARA submodule
+        run: |
+          cd ARA_Library
+          git submodule update --init --depth 1 JUCE_ARA
+          echo "JUCE_ARA branch: $(git -C JUCE_ARA describe --tags --always)"
+
+      # -----------------------------------------------------------------------
+      # 3. Check out ARA_API so JUCE can find it via JUCE_GLOBAL_ARA_SDK_PATH
+      #    Layout: ARA_SDK/ARA_API/  +  ARA_SDK/ARA_Library/ (symlink)
       # -----------------------------------------------------------------------
       - name: Check out ARA_API
         uses: actions/checkout@v4
@@ -29,18 +36,15 @@ jobs:
           repository: Celemony/ARA_API
           path: ARA_SDK/ARA_API
 
-      # Symlink ARA_Library into the umbrella so JUCE_GLOBAL_ARA_SDK_PATH works
-      - name: Assemble ARA SDK umbrella layout
+      - name: Assemble ARA SDK umbrella
         run: |
           ln -s "$GITHUB_WORKSPACE/ARA_Library" "$GITHUB_WORKSPACE/ARA_SDK/ARA_Library"
-          echo "ARA_SDK layout:"
-          ls "$GITHUB_WORKSPACE/ARA_SDK/"
+          echo "ARA_SDK contents: $(ls $GITHUB_WORKSPACE/ARA_SDK/)"
 
       # -----------------------------------------------------------------------
-      # 3. Install Linux build dependencies for JUCE
-      #    (headless VST3 — no display required, but JUCE needs some libs)
+      # 4. Install Linux JUCE build dependencies
       # -----------------------------------------------------------------------
-      - name: Install JUCE Linux dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
@@ -55,15 +59,10 @@ jobs:
             libxcomposite-dev \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
-            ladspa-sdk \
             pkg-config
 
       # -----------------------------------------------------------------------
-      # 4. Configure JUCE_ARA with CMake
-      #    - JUCE_BUILD_EXAMPLES=ON to enable the example PIPs
-      #    - JUCE_GLOBAL_ARA_SDK_PATH points to our assembled umbrella
-      #    - Only build VST3 format to keep build fast
-      #    - Debug build so ARA assertions fire
+      # 5. CMake configure — build ARAPluginDemo examples only, Debug
       # -----------------------------------------------------------------------
       - name: CMake configure
         run: |
@@ -78,7 +77,7 @@ jobs:
             -DJUCE_COPY_PLUGIN_AFTER_BUILD=OFF
 
       # -----------------------------------------------------------------------
-      # 5. Build only ARAPluginDemo_VST3 — skip everything else
+      # 6. Build only the ARAPluginDemo VST3 target
       # -----------------------------------------------------------------------
       - name: Build ARAPluginDemo_VST3
         run: |
@@ -87,16 +86,15 @@ jobs:
             --parallel $(nproc)
 
       # -----------------------------------------------------------------------
-      # 6. Find and display the built VST3
+      # 7. Locate and display built files
       # -----------------------------------------------------------------------
-      - name: Locate built VST3
+      - name: Locate VST3
         run: |
-          echo "=== Built VST3 files ==="
-          find "$GITHUB_WORKSPACE/build" -name "*.so" -path "*/VST3/*" | head -20
-          find "$GITHUB_WORKSPACE/build" -name "*.vst3" | head -10
+          echo "=== Built VST3 ==="
+          find "$GITHUB_WORKSPACE/build" \( -name "*.so" -path "*/VST3/*" -o -name "*.vst3" \) 2>/dev/null
 
       # -----------------------------------------------------------------------
-      # 7. Upload artifact
+      # 8. Upload artifact
       # -----------------------------------------------------------------------
       - name: Upload ARAPluginDemo VST3
         uses: actions/upload-artifact@v4

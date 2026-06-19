@@ -1,0 +1,4 @@
+[submodule "JUCE_ARA"]
+	path = JUCE_ARA
+	url = https://github.com/Celemony/JUCE_ARA.git
+	branch = develop
