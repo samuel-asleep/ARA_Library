@@ -68,9 +68,9 @@ jobs:
           retention-days: 30
 
   # ---------------------------------------------------------------------------
-  # Windows build (Debug, MSVC, for Wine testing)
+  # Windows build (Debug, MSVC) — kept for reference
   # ---------------------------------------------------------------------------
-  build-windows:
+  build-windows-debug:
     runs-on: windows-latest
 
     steps:
@@ -95,10 +95,9 @@ jobs:
       - name: Assemble ARA SDK umbrella
         shell: bash
         run: |
-          # On Windows we copy instead of symlink for MSVC compatibility
           cp -r "$GITHUB_WORKSPACE/ARA_Library" "$GITHUB_WORKSPACE/ARA_SDK/ARA_Library"
 
-      - name: CMake configure (MSVC)
+      - name: CMake configure (MSVC Debug)
         shell: bash
         run: |
           cmake \
@@ -110,7 +109,7 @@ jobs:
             -DJUCE_GLOBAL_ARA_SDK_PATH="$GITHUB_WORKSPACE/ARA_SDK" \
             -DJUCE_COPY_PLUGIN_AFTER_BUILD=OFF
 
-      - name: Build ARAPluginDemo_VST3
+      - name: Build ARAPluginDemo_VST3 (Debug)
         shell: bash
         run: |
           cmake --build "$GITHUB_WORKSPACE/build" \
@@ -118,49 +117,68 @@ jobs:
             --config Debug \
             --parallel
 
-      - name: Bundle MSVC Debug runtime DLLs
-        shell: pwsh
-        run: |
-          # Find MSVC Debug runtime DLLs installed on the runner
-          # These are needed by Wine to load the Debug VST3 build
-          $vcToolsDir = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
-            -latest -property installationPath
-          $vstDest = "$env:GITHUB_WORKSPACE\build\examples\Plugins\ARAPluginDemo_artefacts\Debug\VST3\ARAPluginDemo.vst3\Contents\x86_64-win"
-
-          $dlls = @("MSVCP140D.dll","VCRUNTIME140D.dll","VCRUNTIME140_1D.dll","ucrtbased.dll")
-          foreach ($dll in $dlls) {
-            $found = Get-ChildItem -Path "$vcToolsDir" -Filter $dll -Recurse -ErrorAction SilentlyContinue |
-                     Where-Object { $_.FullName -match "x64" } |
-                     Select-Object -First 1
-            if ($found) {
-              Copy-Item $found.FullName -Destination $vstDest
-              Write-Host "Copied: $dll"
-            } else {
-              Write-Warning "Not found: $dll"
-            }
-          }
-          # ucrtbased is in Windows SDK
-          $ucrtDir = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
-          $ucrtFound = Get-ChildItem -Path $ucrtDir -Filter "ucrtbased.dll" -Recurse -ErrorAction SilentlyContinue |
-                       Where-Object { $_.FullName -match "x64" } |
-                       Select-Object -First 1
-          if ($ucrtFound) {
-            Copy-Item $ucrtFound.FullName -Destination $vstDest -Force
-            Write-Host "Copied: ucrtbased.dll from Windows SDK"
-          }
-
-      - name: Locate VST3
-        shell: bash
-        run: |
-          find "$GITHUB_WORKSPACE/build" -name "*.vst3" -o -name "*.dll" \
-            | grep -i "ARAPlugin" | head -20
-
-      - name: Upload Windows VST3
+      - name: Upload Windows VST3 (Debug)
         uses: actions/upload-artifact@v4
         with:
           name: ARAPluginDemo-VST3-windows-debug
-          path: |
-            ${{ github.workspace }}/build/**/*.vst3
-            ${{ github.workspace }}/build/**/*ARAPlugin*.dll
+          path: ${{ github.workspace }}/build/**/Debug/VST3/**
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # Windows build (Release, MSVC) — no debug CRT, works cleanly under Wine
+  # ---------------------------------------------------------------------------
+  build-windows-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out ARA_Library
+        uses: actions/checkout@v4
+        with:
+          path: ARA_Library
+
+      - name: Clone JUCE_ARA
+        shell: bash
+        run: |
+          git clone --depth 1 --branch develop \
+            https://github.com/Celemony/JUCE_ARA.git \
+            "$GITHUB_WORKSPACE/ARA_Library/JUCE_ARA"
+
+      - name: Check out ARA_API
+        uses: actions/checkout@v4
+        with:
+          repository: Celemony/ARA_API
+          path: ARA_SDK/ARA_API
+
+      - name: Assemble ARA SDK umbrella
+        shell: bash
+        run: |
+          cp -r "$GITHUB_WORKSPACE/ARA_Library" "$GITHUB_WORKSPACE/ARA_SDK/ARA_Library"
+
+      - name: CMake configure (MSVC Release)
+        shell: bash
+        run: |
+          cmake \
+            -B "$GITHUB_WORKSPACE/build" \
+            -S "$GITHUB_WORKSPACE/ARA_Library/JUCE_ARA" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DJUCE_BUILD_EXAMPLES=ON \
+            -DJUCE_BUILD_EXTRAS=OFF \
+            -DJUCE_GLOBAL_ARA_SDK_PATH="$GITHUB_WORKSPACE/ARA_SDK" \
+            -DJUCE_COPY_PLUGIN_AFTER_BUILD=OFF
+
+      - name: Build ARAPluginDemo_VST3 (Release)
+        shell: bash
+        run: |
+          cmake --build "$GITHUB_WORKSPACE/build" \
+            --target ARAPluginDemo_VST3 \
+            --config Release \
+            --parallel
+
+      - name: Upload Windows VST3 (Release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ARAPluginDemo-VST3-windows-release
+          path: ${{ github.workspace }}/build/**/Release/VST3/**
           if-no-files-found: warn
           retention-days: 30
