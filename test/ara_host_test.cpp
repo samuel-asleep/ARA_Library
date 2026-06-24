@@ -133,8 +133,13 @@ int main(int argc, char* argv[])
         std::snprintf(otherArg, sizeof(otherArg), "%d", otherSv[1]);
         std::snprintf(readyArg, sizeof(readyArg), "%d", ready[1]);
 
-        ::execlp(pluginBin.c_str(), pluginBin.c_str(),
-                 mainArg, otherArg, readyArg, (char*)nullptr);
+        const char* vst3Arg = std::getenv("ARA_VST3_PATH");
+        if (vst3Arg)
+            ::execlp(pluginBin.c_str(), pluginBin.c_str(),
+                     mainArg, otherArg, readyArg, vst3Arg, (char*)nullptr);
+        else
+            ::execlp(pluginBin.c_str(), pluginBin.c_str(),
+                     mainArg, otherArg, readyArg, (char*)nullptr);
 
         std::perror("execlp");
         _exit(127);

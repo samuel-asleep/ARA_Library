@@ -750,28 +750,23 @@ void ProxyHost::handleReceivedMessage (const MessageID messageID, const MessageD
             // aborting the whole process. The terminate handler must be set
             // process-wide before initFn runs so Melodyne's threads use it.
             auto oldTerminate = std::set_terminate([] () noexcept {
-                // A Melodyne thread (or our std::thread) has an unhandled
-                // exception. We can't continue safely, so exit cleanly with
-                // status 0 so the host doesn't treat it as a crash.
-                // Use _exit() to skip destructors and avoid re-entrancy.
-                std::fprintf(stderr, "[ProxyHost] terminate intercepted — exiting cleanly\n");
+                std::fprintf(stderr, "[ProxyHost] terminate intercepted on background thread (tid=%zu) — exiting thread\n",
+                             (size_t)std::hash<std::thread::id>{}(std::this_thread::get_id()));
                 std::fflush(stderr);
-                _exit(0);
+                pthread_exit(nullptr);
             });
 
-            // Also handle SIGSEGV from Wine's access violation handler —
-            // Melodyne's background threads may fault accessing stale data.
-            // The signal handler must use siglongjmp or just return to let
-            // the faulting thread exit.
-            struct sigaction sa_segv{}, old_segv{};
-            sa_segv.sa_handler = [](int){ pthread_exit(nullptr); };
-            sa_segv.sa_flags = SA_RESETHAND;
-            sigaction(SIGSEGV, &sa_segv, &old_segv);
-
+            // Suppress SIGABRT from Wine's abort() in case a Melodyne thread
+            // terminates due to an unhandled exception. We temporarily ignore
+            // SIGABRT so the abort() call in Wine's MSVCRT terminate handler
+            // doesn't kill the whole process.
             struct sigaction sa_abrt{}, old_abrt{};
-            sa_abrt.sa_handler = [](int){ pthread_exit(nullptr); };
-            sa_abrt.sa_flags = SA_RESETHAND;
+            sa_abrt.sa_handler = SIG_IGN;
             sigaction(SIGABRT, &sa_abrt, &old_abrt);
+
+            struct sigaction sa_segv{}, old_segv{};
+            sa_segv.sa_handler = SIG_IGN;
+            sigaction(SIGSEGV, &sa_segv, &old_segv);
 
             std::fprintf (stderr, "[ProxyHost] calling initializeARAWithConfiguration on creation thread\n");
             std::fflush (stderr);
@@ -780,8 +775,15 @@ void ProxyHost::handleReceivedMessage (const MessageID messageID, const MessageD
                 reinterpret_cast<void*>(factory->initializeARAWithConfiguration));
             try {
                 initFn (&interfaceConfig);
+            } catch (const std::system_error& e) {
+                std::fprintf (stderr, "[ProxyHost] initFn std::system_error caught: code=%d what=%s\n",
+                              e.code ().value (), e.what ());
+                std::fflush (stderr);
+            } catch (const std::exception& e) {
+                std::fprintf (stderr, "[ProxyHost] initFn std::exception caught: what=%s\n", e.what ());
+                std::fflush (stderr);
             } catch (...) {
-                std::fprintf (stderr, "[ProxyHost] initFn exception swallowed\n");
+                std::fprintf (stderr, "[ProxyHost] initFn unknown exception swallowed\n");
                 std::fflush (stderr);
             }
             std::fprintf (stderr, "[ProxyHost] initializeARAWithConfiguration returned\n");

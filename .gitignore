@@ -20,3 +20,5 @@ xcuserdata
 ARTIFACTS
 build
 out
+ARAPluginDemo-*
+*.exe
